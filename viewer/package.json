@@ -1,0 +1,17 @@
+{
+  "name": "ditto-graph-viewer",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "graphology": "^0.25.4",
+    "graphology-layout-forceatlas2": "^0.10.1",
+    "sigma": "^3.0.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  }
+}
