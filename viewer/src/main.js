@@ -235,7 +235,7 @@ function showNodeInfo(node, graph, sigmaInstance) {
     <div class="info-row"><span class="info-label">Connections</span><span class="info-value">${neighbors.length}</span></div>
     ${fpCount ? `<div class="info-row"><span class="info-label">False positives</span><span class="info-value" style="color:#e05555">${fpCount}</span></div>` : ""}
     <div class="neighbor-list">
-      <h4>Connected orgs</h4>
+      <h4>Connected hypotheses</h4>
       ${neighbors.map(nb => `
         <div class="neighbor-item" data-node="${nb.name}" style="${nb.falsePositive ? "border-left:2px solid #e05555;padding-left:6px" : ""}">
           <span>${nb.name}</span>
@@ -359,7 +359,7 @@ async function initGraph(name) {
   await new Promise(r => setTimeout(r, 30));
 
   document.getElementById("header-stats").textContent =
-    `${graph.order} organisations · ${graph.size} predicted matches · ${new Set(clusters.map(c => c.cluster_id)).size} clusters`;
+    `${graph.order} hypotheses · ${graph.size} predicted matches · ${new Set(clusters.map(c => c.cluster_id)).size} clusters`;
 
   const container = document.getElementById("sigma-container");
   currentRenderer = new Sigma(graph, container, {
