@@ -206,6 +206,33 @@
     button.active { background: #4a90e2; color: #fff; }
     button.active:hover { background: #5a9cf0; }
 
+    .cluster-info {
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid #2a2d3a;
+    }
+    .cluster-info h4, .hypothesis h4 {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #888;
+      margin-bottom: 8px;
+    }
+    .sig-badge {
+      text-transform: none;
+      letter-spacing: 0;
+      color: #4a90e2;
+      font-weight: 600;
+    }
+    .hypothesis {
+      margin-top: 12px;
+      font-size: 12px;
+      line-height: 1.5;
+      color: #ccc;
+    }
+    .hypothesis p { margin-bottom: 8px; }
+    .hypothesis strong { color: #fff; }
+
     #pvalue-legend, #effect-legend {
       display: none;
       margin-bottom: 10px;
@@ -244,7 +271,7 @@
 </head>
 <body>
   <header>
-    <h1>Ditto Graph Viewer</h1>
+    <h1>MWAS Graph Viewer</h1>
     <select id="dataset-select"></select>
     <span class="stats" id="header-stats">Loading…</span>
     <div class="controls">
@@ -255,6 +282,9 @@
     <div class="controls">
       <button id="btn-color-pvalue">Colour by p-value</button>
       <button id="btn-color-effect">Colour by effect size</button>
+    </div>
+    <div class="controls">
+      <button id="btn-significant">Significant clusters only</button>
     </div>
   </header>
 
@@ -268,21 +298,11 @@
     <div id="sidebar">
       <div class="sidebar-section">
         <h2>Search</h2>
-        <input id="search-input" type="text" placeholder="Filter by hypothesis name…" />
+        <input id="search-input" type="text" placeholder="Filter by BioProject or attribute…" />
       </div>
 
       <div id="legend">
         <h2>Clusters</h2>
-        <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid #2a2d3a;">
-          <div style="display:flex;align-items:center;gap:7px;font-size:12px;">
-            <div style="width:22px;height:3px;background:#7890b4;border-radius:2px;flex-shrink:0;"></div>
-            <span>True positive match</span>
-          </div>
-          <div style="display:flex;align-items:center;gap:7px;font-size:12px;">
-            <div style="width:22px;height:3px;background:#dc3232;border-radius:2px;flex-shrink:0;"></div>
-            <span style="color:#e05555;">False positive match</span>
-          </div>
-        </div>
         <div id="pvalue-legend">
           <div class="pvalue-bar"></div>
           <div class="pvalue-labels"><span>p = 1</span><span id="pvalue-max-label"></span></div>

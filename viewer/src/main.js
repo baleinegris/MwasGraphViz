@@ -73,20 +73,55 @@ function parseCSV(text) {
 }
 
 // ── load ──────────────────────────────────────────────────────────────────────
+// cluster_info.json is optional, the dev server answers a missing file with index.html, so a failed parse means none
+async function loadClusterInfo(base) {
+  try {
+    const r = await fetch(base + "cluster_info.json");
+    return r.ok ? await r.json() : {};
+  } catch {
+    return {};
+  }
+}
+
 async function loadData(name) {
   const base = import.meta.env.BASE_URL + `data/${name}/`;
-  const [edgesText, clustersText] = await Promise.all([
+  const [edgesText, clustersText, clusterInfo] = await Promise.all([
     fetch(base + "edges.csv").then(r => r.text()),
     fetch(base + "clusters.csv").then(r => r.text()),
+    loadClusterInfo(base),
   ]);
   return {
     edges: parseCSV(edgesText),
     clusters: parseCSV(clustersText),
+    clusterInfo,
   };
 }
 
+// ── text rendering ────────────────────────────────────────────────────────────
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+// the hypotheses are LLM markdown, render bold, headings and paragraphs, and escape everything else
+function renderHypothesis(text) {
+  return escapeHtml(text)
+    .split(/\n{2,}/)
+    .map(para => para
+      .replace(/^#+\s*(.*)$/gm, "<strong>$1</strong>")
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/\n/g, "<br>"))
+    .map(para => `<p>${para}</p>`)
+    .join("");
+}
+
+function formatP(p) {
+  return p == null ? "–" : p.toPrecision(2);
+}
+
 // ── build graph ───────────────────────────────────────────────────────────────
-function buildGraph(edges, clusters) {
+function buildGraph(edges, clusters, clusterInfo) {
   const graph = new Graph({ multi: false, type: "undirected" });
 
   const clusterMap = {};
@@ -122,6 +157,7 @@ function buildGraph(edges, clusters) {
       color,
       clusterColor: color,
       pvalue: pvalueMap[name] ?? null,
+      significant: clusterInfo[clusterId]?.significant === true,
       cohensD: effectMap[name] ?? null,
       cluster: clusterId,
       x: Math.random() * 1000,
@@ -167,22 +203,32 @@ function runLayout(graph) {
 }
 
 // ── legend ────────────────────────────────────────────────────────────────────
-function buildLegend(clusters, sigmaInstance, graph) {
+function buildLegend(clusters, sigmaInstance, graph, clusterInfo) {
   const counts = {};
   for (const { cluster_id } of clusters) {
+    if (significantOnly && !clusterInfo[cluster_id]?.significant) continue;
     counts[cluster_id] = (counts[cluster_id] || 0) + 1;
   }
 
-  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  // when filtering, list the most significant clusters first, otherwise the largest
+  const sorted = Object.entries(counts).sort((a, b) => significantOnly
+    ? (clusterInfo[a[0]]?.pvalue ?? 1) - (clusterInfo[b[0]]?.pvalue ?? 1)
+    : b[1] - a[1]);
   const container = document.getElementById("legend-items");
+  container.innerHTML = "";
 
   for (const [cid, count] of sorted.slice(0, 30)) {
     const id = parseInt(cid, 10);
+    const info = clusterInfo[cid];
+    const arrow = info?.significant ? (info.direction === "higher" ? " ↑" : " ↓") : "";
     const div = document.createElement("div");
     div.className = "legend-item";
     div.innerHTML = `<div class="legend-dot" style="background:${clusterColor(id)}"></div>
-      <span>Cluster ${id} (${count})</span>`;
-    div.addEventListener("click", () => highlightCluster(id, sigmaInstance, graph));
+      <span>Cluster ${id} (${count})${arrow}</span>`;
+    div.addEventListener("click", () => {
+      highlightCluster(id, sigmaInstance, graph);
+      showClusterInfo(id, clusterInfo);
+    });
     container.appendChild(div);
   }
 
@@ -215,10 +261,38 @@ function highlightCluster(clusterId, sigmaInstance, graph) {
   });
 }
 
+// ── cluster info ──────────────────────────────────────────────────────────────
+function clusterInfoHtml(clusterId, clusterInfo) {
+  const info = clusterInfo[clusterId];
+  if (!info) return "";
+  const stat = (label, value) =>
+    `<div class="info-row"><span class="info-label">${label}</span><span class="info-value">${value}</span></div>`;
+  const hasStats = info.stouffer_z != null;
+  return `
+    <div class="cluster-info">
+      <h4>Cluster ${clusterId}${info.significant ? ` <span class="sig-badge">significant · ${info.direction}</span>` : ""}</h4>
+      ${hasStats ? [
+        stat("BioProjects", info.n_bioprojects),
+        stat("Stouffer Z", info.stouffer_z.toFixed(2)),
+        stat("p-value", formatP(info.pvalue)),
+        stat("q-value", formatP(info.qvalue)),
+        stat("Heterogeneity p", formatP(info.heterogeneity_pvalue)),
+        stat("Direction consistency", info.direction_consistency != null ? info.direction_consistency.toFixed(2) : "–"),
+      ].join("") : ""}
+      ${info.hypothesis ? `<div class="hypothesis"><h4>Cluster hypothesis</h4>${renderHypothesis(info.hypothesis)}</div>` : ""}
+    </div>`;
+}
+
+function showClusterInfo(clusterId, clusterInfo) {
+  const html = clusterInfoHtml(clusterId, clusterInfo);
+  document.getElementById("node-info").innerHTML = html || `<h3>Cluster ${clusterId}</h3>`;
+}
+
 // ── node info panel ───────────────────────────────────────────────────────────
-function showNodeInfo(node, graph, sigmaInstance) {
+function showNodeInfo(node, graph, sigmaInstance, clusterInfo) {
   const attrs = graph.getNodeAttributes(node);
-  const neighbors = graph.neighbors(node).map(n => ({
+  // neighbours hidden by the significance filter are left out
+  const neighbors = graph.neighbors(node).filter(n => !graph.getNodeAttribute(n, "hidden")).map(n => ({
     name: n,
     score: graph.getEdgeAttribute(graph.edge(node, n), "weight"),
     falsePositive: graph.getEdgeAttribute(graph.edge(node, n), "falsePositive"),
@@ -236,12 +310,14 @@ function showNodeInfo(node, graph, sigmaInstance) {
     ${fpCount ? `<div class="info-row"><span class="info-label">False positives</span><span class="info-value" style="color:#e05555">${fpCount}</span></div>` : ""}
     <div class="neighbor-list">
       <h4>Connected hypotheses</h4>
+      <h4>Related findings</h4>
       ${neighbors.map(nb => `
         <div class="neighbor-item" data-node="${nb.name}" style="${nb.falsePositive ? "border-left:2px solid #e05555;padding-left:6px" : ""}">
           <span>${nb.name}</span>
           <span class="score-badge" style="${nb.falsePositive ? "color:#e05555" : ""}">${nb.score.toFixed(3)}</span>
         </div>`).join("")}
-    </div>`;
+    </div>
+    ${clusterInfoHtml(attrs.cluster, clusterInfo)}`;
 
   panel.querySelectorAll(".neighbor-item").forEach(el => {
     el.addEventListener("click", () => {
@@ -250,7 +326,7 @@ function showNodeInfo(node, graph, sigmaInstance) {
         sigmaInstance.getNodeDisplayData(target),
         { duration: 500 }
       );
-      showNodeInfo(target, graph, sigmaInstance);
+      showNodeInfo(target, graph, sigmaInstance, clusterInfo);
     });
   });
 }
@@ -327,6 +403,35 @@ function applyColorMode() {
   });
 }
 
+// ── significance filter ───────────────────────────────────────────────────────
+let significantOnly = false;
+let currentClusters = [];
+let currentClusterInfo = {};
+
+function applySignificanceFilter() {
+  const button = document.getElementById("btn-significant");
+  const available = Object.values(currentClusterInfo).some(info => info.significant);
+  // fall back to showing everything if the new dataset has no significance data
+  if (!available) significantOnly = false;
+  button.disabled = !available;
+  button.title = available ? "" : "This dataset has no cluster significance data";
+  button.classList.toggle("active", significantOnly);
+  if (!currentGraph) return;
+
+  let shown = 0;
+  currentGraph.forEachNode((node, attrs) => {
+    const hidden = significantOnly && !attrs.significant;
+    currentGraph.setNodeAttribute(node, "hidden", hidden);
+    if (!hidden) shown++;
+  });
+  const shownClusters = new Set(
+    currentGraph.filterNodes((_, attrs) => !attrs.hidden).map(n => currentGraph.getNodeAttribute(n, "cluster"))
+  ).size;
+  document.getElementById("header-stats").textContent =
+    `${shown} findings · ${shownClusters} clusters${significantOnly ? " (significant only)" : ""}`;
+  if (currentRenderer) buildLegend(currentClusters, currentRenderer, currentGraph, currentClusterInfo);
+}
+
 // ── init graph for a named dataset ───────────────────────────────────────────
 let currentRenderer = null;
 
@@ -342,10 +447,12 @@ async function initGraph(name) {
     currentRenderer = null;
   }
 
-  const { edges, clusters } = await loadData(name);
+  const { edges, clusters, clusterInfo } = await loadData(name);
+  currentClusters = clusters;
+  currentClusterInfo = clusterInfo;
 
   setMsg("Building graph…");
-  const graph = buildGraph(edges, clusters);
+  const graph = buildGraph(edges, clusters, clusterInfo);
   currentGraph = graph;
   currentPvalueMax = pvalueScaleMax(graph);
   currentHasEffects = graph.someNode((_, attrs) => attrs.cohensD != null);
@@ -375,11 +482,12 @@ async function initGraph(name) {
 
   document.getElementById("loading").style.display = "none";
 
-  buildLegend(clusters, currentRenderer, graph);
+  // sets the header stats and builds the legend for whichever clusters are visible
+  applySignificanceFilter();
   setupSearch(currentRenderer, graph);
 
   currentRenderer.on("clickNode", ({ node }) => {
-    showNodeInfo(node, graph, currentRenderer);
+    showNodeInfo(node, graph, currentRenderer, clusterInfo);
 
     const neighbors = new Set(graph.neighbors(node));
     currentRenderer.setSetting("nodeReducer", (n, data) => {
@@ -411,6 +519,10 @@ async function main() {
   });
   document.getElementById("btn-reset").addEventListener("click", () => {
     currentRenderer?.getCamera().animatedReset({ duration: 400 });
+  });
+  document.getElementById("btn-significant").addEventListener("click", () => {
+    significantOnly = !significantOnly;
+    applySignificanceFilter();
   });
   for (const [mode, spec] of Object.entries(COLOR_MODES)) {
     document.getElementById(spec.button).addEventListener("click", () => {
